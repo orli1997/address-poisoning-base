@@ -61,3 +61,25 @@ def test_paying_a_lookalike_without_poison_is_not_counted_as_loss(tmp_path):
 def test_tiny_genuine_payments_are_not_counterparties(tmp_path):
     con = chain(tmp_path, [(10, 0, V, R, 9_999), (20, 0, V, L, 0)])     # under 0.01 USDC is not "genuine"
     assert detect(con, log=lambda *_: None)["poison_events"] == 0
+
+
+def test_attacker_sending_exactly_one_cent_does_not_swap_roles(tmp_path):
+    # V has a real, two-way business relationship with BIG; an attacker's lookalike sends V 0.01 USDC;
+    # BIG later refunds V a few cents. The attacker must be the lookalike, BIG must never be.
+    BIG = L
+    ATT = R
+    con = chain(tmp_path, [
+        (10, 0, V, BIG, 30_000_000_000), (11, 0, BIG, V, 30_000_000_000),
+        (20, 0, ATT, V, 10_000),                     # attacker: exactly 0.01 USDC
+        (30, 0, BIG, V, 18_788),                     # genuine small refund from the real counterparty
+        (40, 0, V, BIG, 30_000_000_000),
+    ])
+    s = detect(con, log=lambda *_: None)
+    rows = con.execute("SELECT lookalike, mimics FROM poison_events").fetchall()
+    assert rows == [(ATT, BIG)] and s["losses"] == 0
+
+
+def test_lookalike_with_prior_genuine_history_is_not_poison(tmp_path):
+    con = chain(tmp_path, [(10, 0, V, R, 5_000_000), (12, 0, V, L, 5_000_000), (20, 0, L, V, 1)])
+    s = detect(con, log=lambda *_: None)
+    assert s["poison_events"] == 0 and s["skipped_known_counterparty"] == 1

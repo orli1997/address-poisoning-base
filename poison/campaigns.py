@@ -15,7 +15,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from .collect import DEFAULT_DB, DUST_UNITS, connect
+from .collect import DEFAULT_DB, connect
 from .rpc import BASE_RPC
 
 
@@ -43,7 +43,7 @@ def batch(method: str, params_list: list[list], url: str = BASE_RPC, size: int =
 def attribute(con, log=print) -> None:
     con.executescript("DROP TABLE IF EXISTS tx_meta;")
     con.executescript((Path(__file__).resolve().parents[1] / "sql" / "schema.sql").read_text())
-    txs = con.execute("SELECT tx, COUNT(*) FROM poison_events GROUP BY tx").fetchall()
+    txs = con.execute("SELECT tx, COUNT(*) FROM poison_events WHERE tx IS NOT NULL GROUP BY tx").fetchall()
     log(f"{len(txs):,} poisoning transactions to look up")
     t0, rows = time.time(), []
     for i in range(0, len(txs), 1000):
@@ -55,17 +55,17 @@ def attribute(con, log=print) -> None:
         log(f"  {min(i + 1000, len(txs)):,}/{len(txs):,}  {time.time() - t0:.0f}s")
     con.executemany("INSERT OR REPLACE INTO tx_meta VALUES (?,?,?,?,?)", rows)
 
-    # funders of lookalike addresses that send real dust: who gave them USDC (>= 0.01) in the window
+    # funders of lookalike addresses that send real dust: who gave them USDC (>= 0.1) in the window
     con.executescript("""
     DROP TABLE IF EXISTS lookalike_funding;
     CREATE TABLE lookalike_funding AS
     SELECT la.a AS lookalike, fa.a AS funder, COUNT(*) AS n, SUM(x.v) / 1e6 AS usdc
     FROM (SELECT DISTINCT lookalike FROM poison_events WHERE pattern = 'dust_from_lookalike') d
     JOIN addr la ON la.a = d.lookalike
-    JOIN xfer x ON x.t = la.id AND x.v >= %d
+    JOIN xfer x ON x.t = la.id AND x.v >= 100000
     JOIN addr fa ON fa.id = x.f
     GROUP BY 1, 2;
-    """ % DUST_UNITS)
+    """)
     con.commit()
 
 

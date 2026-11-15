@@ -4,7 +4,7 @@
 -- name: overview
 SELECT
   (SELECT COUNT(*) FROM xfer)                                   AS usdc_transfers,
-  (SELECT COUNT(*) FROM xfer WHERE v < 10000)                   AS transfers_under_1_cent,
+  (SELECT COUNT(*) FROM xfer WHERE v < 100000)                  AS transfers_under_10_cents,
   (SELECT COUNT(*) FROM poison_events)                          AS poison_events,
   (SELECT COUNT(DISTINCT victim) FROM poison_events)            AS victims,
   (SELECT COUNT(DISTINCT lookalike) FROM poison_events)         AS lookalike_addresses,
@@ -67,8 +67,19 @@ FROM poison_events GROUP BY victim ORDER BY events DESC LIMIT 20;
 SELECT l.victim, l.lookalike, l.mimics, ROUND(l.amount_units / 1e6, 2) AS usdc,
        l.loss_block - l.first_poison_block AS blocks_after_poison, l.loss_tx,
        (SELECT COUNT(*) FROM xfer x JOIN addr v ON v.id = x.f JOIN addr r ON r.id = x.t
-         WHERE v.a = l.victim AND r.a = l.mimics AND x.v >= 10000) AS genuine_payments_to_real_address
+         WHERE v.a = l.victim AND r.a = l.mimics AND x.v >= 1000000) AS genuine_payments_to_real_address,
+       (SELECT ROUND(COALESCE(SUM(x.v), 0) / 1e6, 2) FROM xfer x JOIN addr la ON la.id = x.f JOIN addr v ON v.id = x.t
+         WHERE la.a = l.lookalike AND v.a = l.victim AND x.v >= 1000000) AS lookalike_paid_victim_usdc
 FROM losses l ORDER BY l.amount_units DESC;
+
+-- name: losses_by_victim
+-- One row per victim. "paid back" > 0 means the "lookalike" sent real money to the victim: review by hand,
+-- it may be a real business relationship rather than a theft.
+SELECT l.victim, l.lookalike, COUNT(*) AS payments, ROUND(SUM(l.amount_units) / 1e6, 2) AS usdc_sent,
+       MIN(l.loss_block - l.first_poison_block) AS first_payment_blocks_after_poison,
+       (SELECT ROUND(COALESCE(SUM(x.v), 0) / 1e6, 2) FROM xfer x JOIN addr la ON la.id = x.f JOIN addr v ON v.id = x.t
+         WHERE la.a = l.lookalike AND v.a = l.victim AND x.v >= 1000000) AS lookalike_paid_victim_usdc
+FROM losses l GROUP BY l.victim, l.lookalike ORDER BY usdc_sent DESC;
 
 -- name: lookalike_funding
 SELECT funder, COUNT(DISTINCT lookalike) AS lookalikes_funded, ROUND(SUM(usdc), 2) AS usdc

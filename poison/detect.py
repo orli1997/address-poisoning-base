@@ -2,12 +2,16 @@
 
 Definitions (all on USDC Transfer logs in the window):
 
-  genuine interaction   a transfer of >= 0.01 USDC between V and R. R is a real counterparty of V.
-  poisoning candidate   a transfer of < 0.01 USDC (including 0) between V and L.
+  genuine interaction   a transfer of >= 1 USDC between V and R. R is a real counterparty of V.
+                        (Not 0.01: poisoners send exactly 0.01 USDC, which made an attacker look "real"
+                        and the real counterparty look like the fake in a first version.)
+  poisoning candidate   a transfer of < 0.1 USDC (including 0) between V and L.
+  stranger rule         L must have had NO genuine interaction with V before the candidate. A poisoner is
+                        someone V never really dealt with; this also stops real and fake swapping roles.
   lookalike             L != R, and L shares at least 4 hex characters at the start AND 4 at the end
                         with R (after "0x"). Chance of that for one random pair: 16^-8 = 1 in 4.3 billion.
   poison event          a candidate where L is a lookalike of a counterparty V interacted with BEFORE it.
-  loss                  V later sends >= 0.01 USDC to L, after the first poison event between them.
+  loss                  V later sends >= 1 USDC to L, after the first poison event between them.
 
 Patterns:
   zero_value_spoof      0 USDC "from V to L": a transferFrom with amount 0 needs no allowance, so the attacker
@@ -28,10 +32,12 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-from .collect import DEFAULT_DB, DUST_UNITS, connect
+from .collect import DEFAULT_DB, connect
 from .rpc import USDC_BASE, TRANSFER_TOPIC, Rpc
 
 MIN_PREFIX = MIN_SUFFIX = 4
+GENUINE_UNITS = 1_000_000      # 1 USDC
+CANDIDATE_UNITS = 100_000      # 0.1 USDC
 
 
 def common_prefix(a: str, b: str) -> int:
@@ -56,7 +62,7 @@ def lookalike_key(a: str) -> str:
 def build_indexes(con) -> None:
     con.execute("CREATE INDEX IF NOT EXISTS xfer_f ON xfer(f, block)")
     con.execute("CREATE INDEX IF NOT EXISTS xfer_t ON xfer(t, block)")
-    con.execute("CREATE INDEX IF NOT EXISTS xfer_small ON xfer(v) WHERE v < %d" % DUST_UNITS)
+    con.execute("CREATE INDEX IF NOT EXISTS xfer_cand ON xfer(v) WHERE v < %d" % CANDIDATE_UNITS)
     con.commit()
 
 
@@ -65,15 +71,15 @@ class Counterparties:
 
     def __init__(self, con, vid: int, addr: dict[int, str]):
         blocks: dict[tuple[int, str], list[int]] = defaultdict(list)
-        for other, b in con.execute("SELECT t, block FROM xfer WHERE f = ? AND v >= ?", (vid, DUST_UNITS)):
+        for other, b in con.execute("SELECT t, block FROM xfer WHERE f = ? AND v >= ?", (vid, GENUINE_UNITS)):
             blocks[(other, "sent")].append(b)
-        for other, b in con.execute("SELECT f, block FROM xfer WHERE t = ? AND v >= ?", (vid, DUST_UNITS)):
+        for other, b in con.execute("SELECT f, block FROM xfer WHERE t = ? AND v >= ?", (vid, GENUINE_UNITS)):
             blocks[(other, "received")].append(b)
         self.by_key: dict[str, list[tuple[str, str, list[int]]]] = defaultdict(list)
-        self.addresses = set()
+        self.first: dict[str, int] = {}
         for (other, rel), bl in blocks.items():
             a = addr[other]
-            self.addresses.add(a)
+            self.first[a] = min(self.first.get(a, bl[0]), min(bl))
             self.by_key[lookalike_key(a)].append((a, rel, sorted(bl)))
 
     def before(self, lookalike: str, block: int):
@@ -87,6 +93,13 @@ class Counterparties:
             hits.append((p + s, p, s, real, rel, bl[0], last))
         return sorted(hits, reverse=True)
 
+    def known_before(self, a: str, block: int) -> bool:
+        return self.first.get(a, block) < block
+
+    @property
+    def addresses(self):
+        return self.first.keys()
+
 
 def detect(con, rpc: Rpc | None = None, log=print) -> dict:
     build_indexes(con)
@@ -95,8 +108,9 @@ def detect(con, rpc: Rpc | None = None, log=print) -> dict:
     con.executescript((Path(__file__).resolve().parents[1] / "sql" / "schema.sql").read_text())
     addr = dict(con.execute("SELECT id, a FROM addr"))
     cands = con.execute("SELECT block, li, f, t, v, tx FROM xfer WHERE v < ? ORDER BY block, li",
-                        (DUST_UNITS,)).fetchall()
-    log(f"{len(cands):,} transfers under 0.01 USDC to check")
+                        (CANDIDATE_UNITS,)).fetchall()
+    log(f"{len(cands):,} transfers under 0.1 USDC to check")
+    skipped_known = 0
     cache: dict[int, Counterparties] = {}
     checks_weighted = 0.0       # expected chance matches: sum over checks of n_counterparties / 16^8
     t0 = time.time()
@@ -111,6 +125,9 @@ def detect(con, rpc: Rpc | None = None, log=print) -> dict:
             checks_weighted += len(cp.addresses) / 16 ** 8
             hits = cp.before(addr[other], block)
             if not hits:
+                continue
+            if cp.known_before(addr[other], block):      # stranger rule
+                skipped_known += 1
                 continue
             _, p, s, real, rel, first, last = hits[0]
             if v == 0:
@@ -133,7 +150,7 @@ def detect(con, rpc: Rpc | None = None, log=print) -> dict:
     losses = []
     for (victim, look), (b0, real) in first_poison.items():
         for block, li, v in con.execute("SELECT block, li, v FROM xfer WHERE f = ? AND t = ? AND v >= ? AND block > ?",
-                                        (ids[victim], ids[look], DUST_UNITS, b0)):
+                                        (ids[victim], ids[look], GENUINE_UNITS, b0)):
             losses.append([victim, look, real, b0, block, li, None, v])
     if rpc is not None:
         for row in losses:      # tx hashes of real-value transfers are not stored; fetch the few we need
@@ -145,7 +162,8 @@ def detect(con, rpc: Rpc | None = None, log=print) -> dict:
     con.commit()
     summary = {"candidates": len(cands), "poison_events": len(events), "victims": len({e[4] for e in events}),
                "losses": len(losses), "lost_usdc": sum(r[7] for r in losses) / 1e6,
-               "expected_chance_matches": checks_weighted, "seconds": round(time.time() - t0, 1)}
+               "expected_chance_matches": checks_weighted,
+               "skipped_known_counterparty": skipped_known, "seconds": round(time.time() - t0, 1)}
     log(summary)
     return summary
 

@@ -36,7 +36,7 @@ def block_to_time(con) -> callable:
 def charts(con) -> None:
     to_time = block_to_time(con)
     ev = pd.read_sql("SELECT block, pattern FROM poison_events", con)
-    allx = pd.read_sql("SELECT block FROM xfer WHERE v >= 10000 AND block % 50 = 0", con)   # 1-in-50 sample
+    allx = pd.read_sql("SELECT block FROM xfer WHERE v >= 1000000 AND block % 50 = 0", con)   # 1-in-50 sample
     if ev.empty:
         return
     ev["hour"] = to_time(ev["block"]).dt.floor("h").values
