@@ -143,11 +143,28 @@ Timeline (Base blocks):
 2. **Fan-out.** It then sent **exactly 0.122 USDC to 567 addresses**, between blocks 57,085,898 and 57,100,363. No other address in the window sent that amount more than 20 times, so the amount works as a fingerprint.
 3. **Use.** 194 of those addresses appear as lookalikes in this data. They sent 19,931 dust transfers to 9,687 victims, each lookalike paying its own gas.
 
-The wallet's nonce (1,135) is consistent with one swap, 567 USDC fan-out transfers and 567 more transactions (hypothesis: ETH for each lookalike's gas, which logs cannot show).
+**Confirmed with ETH transfer data** ([`trace.py`](poison/trace.py)): alongside the USDC, the funder sent **exactly 0.00014 ETH to the same 567 addresses**. Each lookalike received a fixed starter kit: gas money plus dust money. This accounts for the wallet's nonce of 1,135 (1 swap + 567 + 567).
 
 > **First reading corrected.** The router sends tens of millions of USDC to thousands of addresses, and at first it looked like the funder had *withdrawn* from a service. The transaction itself showed the funder sent the ETH and swapped it. A router is not a custodian, so there is no account behind it to identify.
 
-**Still open: where the ETH comes from.** Both the operator and the funder are financed in native ETH. Native ETH transfers do not appear in event logs. Tracing them needs an indexer: an explorer API, or an API such as Alchemy's `getAssetTransfers`.
+### 11. Where the ETH comes from
+
+Native ETH transfers do not appear in event logs, so this step uses Alchemy's `alchemy_getAssetTransfers` ([`trace.py`](poison/trace.py), results in [reports/trace_sources.csv](reports/trace_sources.csv)).
+
+**The funder.** Its first money was 0.119844 ETH on 13 Nov 2026 at 21:59 UTC. It arrived as an internal transfer from contract `0xa18968cc…3501`, through a call to `withdrawETH(address,uint256)` ([`0xf0bbd0f6…781c`](https://basescan.org/tx/0xf0bbd0f664c437d86b7f4a43f07c2ef87cb69566c28ea06109e919b065f7781c)). The call was sent by an automated wallet with 240,599 transactions, and the contract moved 1.8M USDC during the window. That is the shape of a withdrawal from a custodial service (hypothesis: the contract is not labelled). Three minutes later the funder swapped part of the ETH for USDC and started the fan-out.
+
+**The top operator.** Its gas wallet has been active since 24 Nov 2025, about a year. It was refilled 99 times from 90 different sources, 2.796 ETH in total. The 15 largest sources supplied almost all of it:
+
+| Source profile | Sources | ETH |
+|---|---|---|
+| EOA with nonce ≥ 400,000 (service-like) | 6 | 1.775 |
+| Contract (internal transfer) | 4 | 0.718 |
+| EOA with a low nonce | 5 | 0.303 |
+
+- **The biggest single refill.** 0.643 ETH came from `0xf70da978…dbef`, an EOA with a nonce of 17.2M that sent 28.7M USDC in the 72-hour window. That is the profile of an exchange hot wallet (hypothesis, not a label).
+- **Spread on purpose.** 90 sources for 99 refills is consistent with spreading funding across services so that no single account links to the operation (hypothesis).
+
+**Why this matters.** In a real case, these withdrawals are the lead to follow. A custodial service knows which customer account made each withdrawal (KYC), and a request from law enforcement could name them. This analysis can point to the transactions, but not to the people.
 
 ## Method
 
@@ -200,5 +217,6 @@ python -m poison.detect
 python -m poison.campaigns
 python -m poison.report
 python -m poison.followup     # payments into lookalikes after the window; rerun to extend
+python -m poison.trace        # ETH funding sources; needs ALCHEMY_KEY=... in .env (git-ignored)
 python -m pytest
 ```
