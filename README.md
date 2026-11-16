@@ -1,5 +1,7 @@
 # Address poisoning on Base USDC: a 72-hour on-chain investigation
 
+**English** | [עברית](README.he.md)
+
 **Window:** Base mainnet blocks 56,511,333 to 57,807,333, 2026-11-12 14:10 to 2026-11-15 14:10 UTC.
 **Data:** every USDC `Transfer` log in the window, 11,670,478 transfers, pulled from a public RPC. No third-party labels were used.
 
