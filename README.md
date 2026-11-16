@@ -15,6 +15,7 @@
 | Poisoning transactions | 35,153 |
 | Share from one operator | **84.4%** of events, through one batch contract |
 | Confirmed USDC lost inside the window | **1 payment, 298 USDC** (verified on-chain) |
+| New losses in the ~20 h after the window | **0** |
 
 Address poisoning is industrial on Base. One operator sent most of it.
 
@@ -107,6 +108,47 @@ Timeline (Base blocks):
 - **Clean pattern.** It is a textbook case: the victim forwards incoming funds to the same destination each time, and the one time they copied from history, they copied the fake.
 - **The poison passes on.** Within the window, the real recipient `0x07423f37…` forwards the money and is then poisoned in turn by `0x6fa54e03…`, a lookalike of its own counterparty.
 
+## Following the money (after the window)
+
+### 7. Follow-up: about 20 more hours, no new losses
+
+[`followup.py`](poison/followup.py) asked the node for every USDC transfer **into** any of the 80,646 lookalikes from the end of the window (block 57,807,334) to block 58,167,968 (16 Nov 2026, 10:12 UTC), about 20 hours. It queries 2,000 addresses per call and is resumable, so the follow-up can be extended later.
+
+| Transfers into lookalikes | Count |
+|---|---|
+| Total | 28,939 |
+| Zero-value spoofs (lookalikes reused) | 28,416 |
+| Dust (above 0, under 1 USDC) | 523 |
+| **Payments of 1 USDC or more (new losses)** | **0** |
+
+- **Checked against the known loss.** Run over the block of the 298 USDC loss, the same scanner finds it, so the zero reflects the data and not a broken query.
+- **Still a lower bound.** Twenty hours is short. The script can be rerun to extend the follow-up period.
+
+### 8. The main operator went quiet
+
+- **Last transaction.** The top operator's gas wallet `0x3959e496…f1f6` sent 1,883 more transactions after the window. Its last one was [`0xbc235803…9d81`](https://basescan.org/tx/0xbc235803690def39f18488fd60cb59ce49e5b926f593d915158b338e78529d81) in block 58,022,783 (16 Nov 2026, 02:08 UTC): one batch of 300 spoofs for a fee of 0.0000189 ETH. Its nonce has not moved since (366,591).
+- **Not just one wallet.** In 1,000-block samples, zero-value USDC transfers across all of Base fell from 100 (block 57.9M) to 7–26 (blocks 58.0M–58.16M), and only 0–7 of those went into known lookalikes. The campaign as a whole paused.
+- **Probably not out of gas.** The wallet still holds 0.0000429 ETH, enough for about two more batches at the last fee. Why it stopped is unknown (hypothesis: a pause or a move to new infrastructure).
+- **Cost.** About 63 nano-ETH (0.000000063 ETH) per spoof at that fee. Poisoning tens of thousands of wallets an hour costs very little on Base.
+
+### 9. The stolen 298 USDC has not moved
+
+- **Still in place.** As of 16 Nov 2026 the lookalike `0x0742fdb7…d158` still holds the 298 USDC.
+- **Never active.** It has never sent a transaction (nonce 0) and has no code.
+- **What it suggests.** Attackers leave the stolen funds in place for now (hypothesis: they collect from many lookalikes later).
+
+### 10. How dust-sending lookalikes are funded
+
+1. **ETH in.** `0x0370fc95…729f` swapped **0.0364 ETH for 69.886 USDC** through a DEX router (`0x0729e2a4…97f7`, via the WETH/USDC pool) in [`0x34d867bf…270e`](https://basescan.org/tx/0x34d867bf87583fc1c3425bb3ce4f8d0e2fbd53a83224f8ef5af10e64a326270e).
+2. **Fan-out.** It then sent **exactly 0.122 USDC to 567 addresses**, between blocks 57,085,898 and 57,100,363. No other address in the window sent that amount more than 20 times, so the amount works as a fingerprint.
+3. **Use.** 194 of those addresses appear as lookalikes in this data. They sent 19,931 dust transfers to 9,687 victims, each lookalike paying its own gas.
+
+The wallet's nonce (1,135) is consistent with one swap, 567 USDC fan-out transfers and 567 more transactions (hypothesis: ETH for each lookalike's gas, which logs cannot show).
+
+> **First reading corrected.** The router sends tens of millions of USDC to thousands of addresses, and at first it looked like the funder had *withdrawn* from a service. The transaction itself showed the funder sent the ETH and swapped it. A router is not a custodian, so there is no account behind it to identify.
+
+**Still open: where the ETH comes from.** Both the operator and the funder are financed in native ETH. Native ETH transfers do not appear in event logs. Tracing them needs an indexer: an explorer API, or an API such as Alchemy's `getAssetTransfers`.
+
 ## Method
 
 Code is in [poison/](poison/), queries in [sql/analysis.sql](sql/analysis.sql), and tests in [tests/](tests/).
@@ -157,5 +199,6 @@ python -m poison.collect --hours 72      # writes ~/poisoning_data/base_usdc.db 
 python -m poison.detect
 python -m poison.campaigns
 python -m poison.report
+python -m poison.followup     # payments into lookalikes after the window; rerun to extend
 python -m pytest
 ```
