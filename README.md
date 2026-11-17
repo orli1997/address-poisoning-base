@@ -180,7 +180,22 @@ The research above ran once, on 72 hours of past data. [`live.py`](poison/live.p
 - **It remembers relationships.** Every transfer of 1 USDC or more is stored as a relationship. A poison alert needs a relationship from an *earlier* block, which is the same rule as the research.
 - **Warm start.** A fresh detector knows no history, so it misses poisoning that imitates older counterparties. `--seed` loads the research window's relationships first. Relationships unused for 30 days are dropped (`--keep-days`).
 - **Reorg safety.** It stays 10 blocks (~2 s) behind the head.
-- **Next step:** a Telegram bot that sends each alert to the victim who subscribed their address.
+
+### Telegram alert bot
+
+[`bot.py`](poison/bot.py) turns the detector's alerts into messages. A user sends the bot a wallet address and gets a message within seconds when that wallet is poisoned or pays a lookalike.
+
+| Command | What happens |
+|---|---|
+| `/watch 0x…` | watch an address; the reply also lists lookalikes already planted in its history |
+| ⚠️ poison alert | the real address, the fake one and the transaction, a few seconds after the poisoning |
+| 🚨 loss alert | the amount sent to the lookalike, and what to do next |
+| `/check 0x…` | before sending: was this address used to poison anyone? |
+| `/unwatch`, `/list` | stop, and list watched addresses |
+
+- **Privacy.** The bot stores only (chat id, watched address), locally, and alerts only the chat that watches an address. There is no public list of victims.
+- **One alert per lookalike.** Repeats raise a counter, not a new message. A user who blocks the bot is removed.
+- **Tested live.** `/check` on a lookalike caught minutes earlier answered: used to poison 11 wallets, all imitating one real address.
 
 ## Method
 
@@ -237,5 +252,6 @@ python -m poison.trace        # ETH funding sources; needs ALCHEMY_KEY=... in .e
 python -m poison.live --replay  # live logic on the research window; must match detect.py
 python -m poison.live --seed    # optional warm start from the research window
 python -m poison.live           # follow the chain head; Ctrl+C to stop, rerun to resume
+python -m poison.bot            # Telegram alerts; needs TELEGRAM_BOT_TOKEN=... in .env
 python -m pytest
 ```
