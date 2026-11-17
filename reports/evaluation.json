@@ -1,0 +1,17 @@
+{
+  "control_imitated_sampled": 1000,
+  "control_imitated_with_real_activity": 1000,
+  "lookalikes": 80646,
+  "poison_events": 327930,
+  "chance_matches_expected": 1.019,
+  "lookalikes_by_victims": {
+    "1 victim": 76466,
+    "2-9 victims": 3786,
+    "10+ victims": 394
+  },
+  "lookalikes_with_real_activity": 0,
+  "events_from_active_lookalikes": 0,
+  "events_between_vanity_addresses": 109,
+  "precision_lower_bound_events": 0.9997,
+  "precision_lower_bound_lookalikes": 1.0
+}

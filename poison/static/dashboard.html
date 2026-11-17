@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Poisoning Dashboard</title>
+<style>
+:root {
+  --bg: #f4f4f2; --surface: #fcfcfb; --border: #e2e1dc; --grid: #ecebe7; --text: #0b0b0b; --text-2: #52514e; --muted: #7a7974;
+  --series-1: #2a78d6; --series-1-hover: #1c5cab; --good: #0ca30c; --critical: #d03b3b; --warning: #fab219;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121211; --surface: #1a1a19; --border: #33332f; --grid: #2a2a27; --text: #f0efec; --text-2: #c3c2b7; --muted: #8f8e86;
+    --series-1: #3987e5; --series-1-hover: #6da7ec; --good: #0ca30c; --critical: #e66767;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+nav { display: flex; gap: 20px; align-items: center; padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--surface); }
+nav b { margin-right: auto; font-size: 15px; }
+nav a { color: var(--text-2); text-decoration: none; font-size: 15px; }
+nav a[aria-current] { color: var(--text); font-weight: 600; }
+main { max-width: 1120px; margin: 0 auto; padding: 24px 16px 48px; }
+.head { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; justify-content: space-between; margin-bottom: 18px; }
+h1 { font-size: 24px; margin: 0; letter-spacing: -0.01em; }
+.status { color: var(--text-2); display: flex; gap: 8px; align-items: center; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile, .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.tile .label { color: var(--text-2); font-size: 13px; }
+.tile .value { font-size: 28px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.tile .sub { color: var(--muted); font-size: 12px; }
+.panel h2 { font-size: 15px; margin: 0 0 2px; }
+.panel .desc { color: var(--text-2); font-size: 13px; margin: 0 0 12px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 16px; }
+.chart-wrap { position: relative; }
+svg { display: block; width: 100%; height: 220px; overflow: visible; }
+svg text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.bar { fill: var(--series-1); }
+.bar:hover, .bar:focus { fill: var(--series-1-hover); outline: none; }
+.tip { position: absolute; pointer-events: none; background: var(--text); color: var(--bg); padding: 6px 9px; border-radius: 6px; font-size: 12px; white-space: nowrap; transform: translate(-50%, -110%); display: none; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th { text-align: left; color: var(--text-2); font-weight: 500; font-size: 12px; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--border); }
+td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--grid); }
+td.num, th.num { text-align: right; padding-right: 0; }
+code, .mono { font: 12.5px var(--mono); }
+a { color: var(--series-1); }
+.toggle { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--text-2); font-size: 12px; padding: 3px 9px; cursor: pointer; float: right; }
+.empty { color: var(--muted); padding: 10px 0; }
+.eval li { margin-bottom: 6px; }
+.eval { padding-left: 18px; margin: 0; }
+</style>
+</head>
+<body>
+<nav><b>Address-poisoning guard · Base USDC</b><a href="/">Check</a><a href="/dashboard" aria-current="page">Dashboard</a></nav>
+<main>
+  <div class="head">
+    <h1>What the detector sees</h1>
+    <div class="status" id="status">Loading…</div>
+  </div>
+  <div class="tiles" id="tiles"></div>
+
+  <div class="panel">
+    <button class="toggle" id="toggle" aria-pressed="false">Table</button>
+    <h2>New victim–lookalike pairs, per 10 minutes</h2>
+    <p class="desc">Each bar counts wallets that got a new lookalike planted in their history. Last 24 hours; nothing is counted while the detector is off.</p>
+    <div class="chart-wrap" id="chart"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h2>Most imitated addresses</h2>
+      <p class="desc">Real addresses whose counterparties are being targeted, last 24 h.</p>
+      <div id="mimicked"></div>
+    </div>
+    <div class="panel">
+      <h2>Busiest lookalikes</h2>
+      <p class="desc">Fake addresses planted in the most wallets, last 24 h. Never send to these.</p>
+      <div id="lookalikes"></div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h2>Payments to lookalikes</h2>
+      <p class="desc">A wallet sent ≥ 1 USDC to a lookalike it was poisoned with.</p>
+      <div id="losses"></div>
+    </div>
+    <div class="panel">
+      <h2>How often is it wrong?</h2>
+      <p class="desc">Measured on the 72-hour research window (<code>python -m poison.evaluate</code>).</p>
+      <div id="eval"></div>
+    </div>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => Number(n).toLocaleString("en-US");
+const short = (a) => a.slice(0, 8) + "…" + a.slice(-6);
+const scan = (kind, v, text) => `<a href="https://basescan.org/${kind}/${v}" target="_blank" rel="noopener">${text}</a>`;
+const hhmm = (t) => new Date(t * 1000).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+let tableView = false, last = null;
+
+function tile(label, value, sub) {
+  return `<div class="tile"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub || ""}</div></div>`;
+}
+
+function table(rows, cols) {
+  if (!rows.length) return '<div class="empty">Nothing yet.</div>';
+  return `<table><thead><tr>${cols.map((c) => `<th class="${c.num ? "num" : ""}">${c.h}</th>`).join("")}</tr></thead><tbody>${
+    rows.map((r) => `<tr>${cols.map((c) => `<td class="${c.num ? "num" : ""}">${c.f(r)}</td>`).join("")}</tr>`).join("")
+  }</tbody></table>`;
+}
+
+function chart(series, startedAt) {
+  if (tableView) {
+    $("chart").innerHTML = table(series.slice().reverse().filter((d) => d.pairs), [
+      { h: "10 minutes from", f: (d) => hhmm(d.t) }, { h: "New pairs", num: true, f: (d) => fmt(d.pairs) }]);
+    return;
+  }
+  const W = $("chart").clientWidth || 800, H = 220, L = 40, B = 22, T = 8;
+  const max = Math.max(1, ...series.map((d) => d.pairs));
+  const step = Math.pow(10, Math.floor(Math.log10(max)));
+  const top = Math.ceil(max / step) * step;
+  const n = series.length, bw = (W - L) / Math.max(n, 1), gap = Math.min(2, bw * 0.25);
+  const y = (v) => T + (H - T - B) * (1 - v / top);
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="New pairs per 10 minutes">`;
+  for (let i = 0; i <= 4; i++) {
+    const v = (top * i) / 4, yy = y(v);
+    s += `<line x1="${L}" x2="${W}" y1="${yy}" y2="${yy}" stroke="var(--grid)"/>`;
+    s += `<text x="${L - 6}" y="${yy + 4}" text-anchor="end">${fmt(Math.round(v))}</text>`;
+  }
+  const every = Math.max(1, Math.ceil(n / 8));
+  series.forEach((d, i) => {
+    const x = L + i * bw + gap / 2, w = Math.max(1, bw - gap), h = Math.max(0, H - B - y(d.pairs));
+    if (d.pairs) {
+      const r = Math.min(4, w / 2, h);
+      const yt = H - B - h;
+      // rounded data end, square at the baseline
+      s += `<path class="bar" tabindex="0" data-i="${i}" d="M${x},${H - B} V${yt + r} Q${x},${yt} ${x + r},${yt} H${x + w - r} Q${x + w},${yt} ${x + w},${yt + r} V${H - B} Z"/>`;
+    }
+    if (i % every === 0) s += `<text x="${x + w / 2}" y="${H - 6}" text-anchor="middle">${hhmm(d.t)}</text>`;
+  });
+  if (startedAt && startedAt > series[0].t) {
+    const sx = L + ((startedAt - series[0].t) / 600) * bw;
+    s += `<line x1="${sx}" x2="${sx}" y1="${T}" y2="${H - B}" stroke="var(--muted)" stroke-dasharray="3 3"/>`;
+    s += `<text x="${sx - 4}" y="${T + 10}" text-anchor="end">detector started</text>`;
+  }
+  s += `<line x1="${L}" x2="${W}" y1="${H - B}" y2="${H - B}" stroke="var(--border)"/></svg><div class="tip" id="tip"></div>`;
+  $("chart").innerHTML = s;
+  const tip = $("tip");
+  $("chart").querySelectorAll(".bar").forEach((el) => {
+    const show = () => {
+      const d = series[+el.dataset.i], bb = el.getBBox();
+      tip.innerHTML = `<b>${fmt(d.pairs)}</b> new pairs · ${hhmm(d.t)}–${hhmm(d.t + 600)}`;
+      const scale = $("chart").clientWidth / W;
+      tip.style.left = (bb.x + bb.width / 2) * scale + "px";
+      tip.style.top = bb.y * (220 / H) + "px";
+      tip.style.display = "block";
+    };
+    el.addEventListener("pointermove", show);
+    el.addEventListener("focus", show);
+    el.addEventListener("pointerleave", () => (tip.style.display = "none"));
+    el.addEventListener("blur", () => (tip.style.display = "none"));
+  });
+}
+
+function render(d) {
+  last = d;
+  const age = d.now - d.detector.updated_at;
+  const ok = d.detector.updated_at && age < 60;
+  $("status").innerHTML = `<span class="dot" style="background:var(${ok ? "--good" : "--critical"})"></span>` +
+    (ok ? `Detector live · block ${fmt(d.detector.next_block - 1)} · updated ${age}s ago`
+        : `Detector not running${d.detector.updated_at ? ` · last update ${hhmm(d.detector.updated_at)}` : ""}`);
+  const lv = d.live;
+  const since = lv.since ? `since ${new Date(lv.since * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : "";
+  $("tiles").innerHTML =
+    tile("Wallets poisoned", fmt(lv.victims), since) +
+    tile("Lookalike addresses", fmt(lv.lookalikes), "distinct fakes seen live") +
+    tile("Poison transfers", fmt(lv.events), "0-value spoofs and dust") +
+    tile("Payments to lookalikes", fmt(lv.losses), lv.losses ? `${fmt(lv.lost_usdc.toFixed(2))} USDC` : "none caught live yet") +
+    tile("Known pairs", fmt(d.known_pairs_total), "incl. the 72 h research window");
+  chart(d.series, d.live.since);
+  $("mimicked").innerHTML = table(d.top_mimicked, [
+    { h: "Real address", f: (r) => scan("address", r.address, `<span class="mono">${short(r.address)}</span>`) },
+    { h: "Lookalikes", num: true, f: (r) => fmt(r.lookalikes) },
+    { h: "Wallets targeted", num: true, f: (r) => fmt(r.victims) }]);
+  $("lookalikes").innerHTML = table(d.top_lookalikes, [
+    { h: "Lookalike", f: (r) => scan("address", r.address, `<span class="mono">${short(r.address)}</span>`) },
+    { h: "Imitates", f: (r) => `<span class="mono">${short(r.mimics)}</span>` },
+    { h: "Wallets", num: true, f: (r) => fmt(r.victims) }]);
+  $("losses").innerHTML = table(d.recent_losses, [
+    { h: "When", f: (r) => hhmm(r.at) },
+    { h: "USDC", num: true, f: (r) => fmt(r.usdc.toFixed(2)) },
+    { h: "To lookalike", f: (r) => `<span class="mono">${short(r.lookalike)}</span>` },
+    { h: "Tx", f: (r) => scan("tx", r.tx, "view") }]);
+  const e = d.evaluation;
+  $("eval").innerHTML = !e ? '<div class="empty">Run the evaluation to fill this in.</div>' : `<ul class="eval">
+    <li><b>Chance:</b> about ${Math.round(e.chance_matches_expected)} of ${fmt(e.poison_events)} events could be a random lookalike match.</li>
+    <li><b>Behaviour:</b> ${fmt(e.lookalikes_with_real_activity)} of ${fmt(e.lookalikes)} flagged lookalikes did any real business (≥ 1 USDC). Control: ${fmt(e.control_imitated_with_real_activity)} of ${fmt(e.control_imitated_sampled)} imitated (real) addresses did.</li>
+    <li><b>Vanity addresses:</b> ${fmt(e.events_between_vanity_addresses)} events involve low-entropy addresses (like 0x…cccc), counted as uncertain.</li>
+    <li><b>Precision, lower bound:</b> ${(e.precision_lower_bound_events * 100).toFixed(2)}% of events.</li>
+    <li><b>Not measured:</b> recall. Poisoning that imitates relationships older than the detector's memory, or near-miss lookalikes, is missed.</li></ul>`;
+}
+
+async function load() {
+  try {
+    const r = await fetch("/api/stats");
+    render(await r.json());
+  } catch (err) {
+    $("status").textContent = "Can't reach the local server";
+  }
+}
+$("toggle").addEventListener("click", () => {
+  tableView = !tableView;
+  $("toggle").textContent = tableView ? "Chart" : "Table";
+  $("toggle").setAttribute("aria-pressed", tableView);
+  if (last) chart(last.series, last.live.since);
+});
+window.addEventListener("resize", () => last && chart(last.series, last.live.since));
+load();
+setInterval(load, 10000);
+</script>
+</body>
+</html>

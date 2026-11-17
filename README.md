@@ -197,6 +197,45 @@ The research above ran once, on 72 hours of past data. [`live.py`](poison/live.p
 - **One alert per lookalike.** Repeats raise a counter, not a new message. A user who blocks the bot is removed.
 - **Tested live.** `/check` on a lookalike caught minutes earlier answered: used to poison 11 wallets, all imitating one real address.
 
+### Check page and dashboard
+
+[`web.py`](poison/web.py) serves two local pages (`python -m poison.web`, then http://127.0.0.1:8787).
+
+**Check before you send.** You paste the address you are about to pay, and optionally your own wallet. The answer is one of four:
+
+| Verdict | When |
+|---|---|
+| 🚨 Do not send | a known lookalike, planted in your history, or already paid by a victim |
+| ⚠️ Looks like an address you have paid | it shares the first and last 4 characters with one of your counterparties, but you never paid it. This catches a lookalike **before** it is seen in an attack |
+| ✓ You have paid it before | your wallet already sent or received ≥ 1 USDC with this exact address |
+| No record | none of the above; the page says this is not proof it is safe |
+
+The page underlines every character that differs from the real address. It recognises the research window's 241,370 lookalike pairs plus everything the live detector finds.
+
+**Dashboard.** It refreshes every 10 seconds and shows:
+- the detector's status;
+- poisoned wallets, lookalikes and payments to lookalikes;
+- new pairs per 10 minutes (with a table view);
+- the most imitated addresses and the busiest lookalikes;
+- the precision results below.
+
+It lists imitated addresses and lookalikes, never victims.
+
+### How often is it wrong?
+
+There is no labelled list of poisoners, so [`evaluate.py`](poison/evaluate.py) bounds precision from three sides on the 72-hour window:
+
+| Check | Result |
+|---|---|
+| **Chance.** Random addresses that match a counterparty's first and last 4 characters | about 1 of 327,930 events expected |
+| **Behaviour.** A lookalike exists to be copied, so it should do no real business. Flagged lookalikes with any ≥ 1 USDC transfer (other than a victim's loss) | **0 of 80,646** |
+| **Control for that test.** The same test on 1,000 of the real addresses being imitated | 1,000 of 1,000 have real activity, so the test works |
+| **Vanity addresses.** Events between low-entropy addresses (e.g. `0x…cccc`), which could match without an attack | 109 events, counted as uncertain |
+| **Precision, lower bound** | **99.97%** of events |
+
+- **Not measured: recall.** The detector misses poisoning that imitates relationships older than its memory, and near-miss lookalikes (for example 3 matching characters, or matching characters in the middle).
+- **Short behaviour window.** The behaviour test sees only 72 hours of each address.
+
 ## Method
 
 Code is in [poison/](poison/), queries in [sql/analysis.sql](sql/analysis.sql), and tests in [tests/](tests/).
@@ -253,5 +292,7 @@ python -m poison.live --replay  # live logic on the research window; must match 
 python -m poison.live --seed    # optional warm start from the research window
 python -m poison.live           # follow the chain head; Ctrl+C to stop, rerun to resume
 python -m poison.bot            # Telegram alerts; needs TELEGRAM_BOT_TOKEN=... in .env
+python -m poison.web            # check page and dashboard on http://127.0.0.1:8787
+python -m poison.evaluate       # precision checks -> reports/evaluation.json
 python -m pytest
 ```

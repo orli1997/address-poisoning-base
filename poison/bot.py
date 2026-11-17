@@ -179,13 +179,13 @@ class Bot:
         for chat, victim, look, mimics, pattern, tx in self.con.execute("""
                 SELECT s.chat_id, p.victim, p.lookalike, p.mimics, p.pattern, p.first_tx
                 FROM subs s JOIN pairs p ON p.victim = s.address
-                WHERE NOT EXISTS (SELECT 1 FROM notified n WHERE n.chat_id = s.chat_id AND n.kind = 'poison'
+                WHERE p.detected_at >= s.since AND NOT EXISTS (SELECT 1 FROM notified n WHERE n.chat_id = s.chat_id AND n.kind = 'poison'
                                   AND n.ref = p.lookalike)""").fetchall():
             yield chat, "poison", look, poison_text(victim, look, mimics, pattern, tx)
         for chat, victim, look, mimics, block, li, tx, units in self.con.execute("""
                 SELECT s.chat_id, l.victim, l.lookalike, l.mimics, l.block, l.li, l.tx, l.amount_units
                 FROM subs s JOIN loss_alerts l ON l.victim = s.address
-                WHERE NOT EXISTS (SELECT 1 FROM notified n WHERE n.chat_id = s.chat_id AND n.kind = 'loss'
+                WHERE l.detected_at >= s.since AND NOT EXISTS (SELECT 1 FROM notified n WHERE n.chat_id = s.chat_id AND n.kind = 'loss'
                                   AND n.ref = l.block || ':' || l.li)""").fetchall():
             yield chat, "loss", f"{block}:{li}", loss_text(victim, look, mimics, units / 1e6, tx)
 

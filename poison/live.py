@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 
 def connect_live(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(path))
+    con = sqlite3.connect(str(path), timeout=30)       # the detector, bot and web page share this file
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
     con.executescript(SCHEMA)
@@ -225,6 +225,7 @@ def follow(db: Path, rpc: Rpc, poll: float, keep_days: float, until: int | None 
         det.process(parse_logs(fetch(rpc, nxt, hi)))
         nxt = hi + 1
         set_meta(con, "next_block", nxt)
+        set_meta(con, "updated_at", int(time.time()))
         con.commit()
         if time.time() - last_prune > 3600:
             last_prune = time.time()
@@ -266,6 +267,24 @@ def seed(db: Path, research: Path) -> None:
             print(f"  {n:,} relationships", flush=True)
     con.commit()
     print(f"seeded {n:,} sender->receiver relationships from {research}")
+    # known (victim, lookalike) pairs, so /check and the web page recognise the research window's lookalikes.
+    # detected_at stays NULL: they are history, and the bot never sends them as new alerts.
+    rows = src.execute("""SELECT victim, lookalike, mimics, prefix_match, suffix_match, pattern, block, tx,
+                                 MAX(block) OVER w, COUNT(*) OVER w,
+                                 ROW_NUMBER() OVER (PARTITION BY victim, lookalike ORDER BY block, li) rn
+                          FROM poison_events WINDOW w AS (PARTITION BY victim, lookalike)""")
+    batch, m = [], 0
+    for r in rows:
+        if r[-1] != 1:
+            continue
+        batch.append(r[:-1] + (None,))
+        if len(batch) == 20_000:
+            m += con.executemany("INSERT OR IGNORE INTO pairs VALUES (?,?,?,?,?,?,?,?,?,?,?)", batch).rowcount
+            con.commit()
+            batch = []
+    m += con.executemany("INSERT OR IGNORE INTO pairs VALUES (?,?,?,?,?,?,?,?,?,?,?)", batch).rowcount
+    con.commit()
+    print(f"seeded {m:,} known victim-lookalike pairs")
 
 
 def replay(research: Path, out: Path) -> dict:
@@ -299,7 +318,7 @@ def replay(research: Path, out: Path) -> dict:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", type=Path, default=LIVE_DB)
-    ap.add_argument("--seed", action="store_true", help="load relationships from the research DB, then exit")
+    ap.add_argument("--seed", action="store_true", help="load relationships and pairs from the research DB, then exit")
     ap.add_argument("--replay", action="store_true", help="rerun the research window and compare with batch")
     ap.add_argument("--research-db", type=Path, default=RESEARCH_DB)
     ap.add_argument("--poll", type=float, default=2.0, help="seconds between head checks")

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Check Before Sending</title>
+<style>
+:root {
+  --bg: #f4f4f2; --surface: #fcfcfb; --border: #e2e1dc; --text: #0b0b0b; --text-2: #52514e; --muted: #7a7974;
+  --accent: #2a78d6; --danger: #d03b3b; --danger-bg: #fbeaea; --warn: #b27800; --warn-bg: #fdf3dc;
+  --good: #0a7d0a; --good-bg: #e6f4e6; --info-bg: #eef1f5; --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121211; --surface: #1a1a19; --border: #33332f; --text: #f0efec; --text-2: #c3c2b7; --muted: #8f8e86;
+    --accent: #3987e5; --danger: #e66767; --danger-bg: #3a1d1d; --warn: #e0a930; --warn-bg: #362a12;
+    --good: #3cc23c; --good-bg: #16301a; --info-bg: #23262b;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+nav { display: flex; gap: 20px; align-items: center; padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--surface); }
+nav b { margin-right: auto; }
+nav a { color: var(--text-2); text-decoration: none; }
+nav a[aria-current] { color: var(--text); font-weight: 600; }
+main { max-width: 720px; margin: 40px auto; padding: 0 16px; }
+h1 { font-size: 28px; margin: 0 0 6px; letter-spacing: -0.01em; }
+.lede { color: var(--text-2); margin: 0 0 28px; }
+form { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; display: grid; gap: 14px; }
+label { font-weight: 600; font-size: 14px; display: grid; gap: 6px; }
+label span { font-weight: 400; color: var(--muted); }
+input { font: 15px var(--mono); padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); width: 100%; }
+input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+button { justify-self: start; font: 600 15px system-ui, sans-serif; padding: 10px 22px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; }
+#result { margin-top: 20px; }
+.card { border-radius: 12px; padding: 18px 20px; border: 1px solid var(--border); background: var(--surface); }
+.card h2 { margin: 0 0 8px; font-size: 20px; display: flex; gap: 10px; align-items: center; }
+.danger { background: var(--danger-bg); border-color: var(--danger); }
+.danger h2 { color: var(--danger); }
+.warning { background: var(--warn-bg); border-color: var(--warn); }
+.warning h2 { color: var(--warn); }
+.known { background: var(--good-bg); border-color: var(--good); }
+.known h2 { color: var(--good); }
+.unknown { background: var(--info-bg); }
+.addr { font: 14px var(--mono); word-break: break-all; display: block; margin: 2px 0 10px; }
+.addr .diff { color: var(--danger); font-weight: 700; text-decoration: underline; }
+.small { color: var(--text-2); font-size: 14px; }
+ul { margin: 8px 0 0; padding-left: 20px; }
+.tips { margin-top: 32px; color: var(--text-2); font-size: 14px; }
+.tips h3 { color: var(--text); font-size: 15px; margin: 0 0 6px; }
+</style>
+</head>
+<body>
+<nav><b>Address-poisoning guard · Base USDC</b><a href="/" aria-current="page">Check</a><a href="/dashboard">Dashboard</a></nav>
+<main>
+  <h1>Check before you send</h1>
+  <p class="lede">Scammers plant addresses that share the first and last characters of one you have paid, hoping you copy the fake one from your history. Paste the address you are about to send to.</p>
+  <form id="f">
+    <label>Sending to
+      <input id="to" placeholder="0x…" autocomplete="off" spellcheck="false" required>
+    </label>
+    <label>Your wallet <span>optional: also checks your own history</span>
+      <input id="from" placeholder="0x…" autocomplete="off" spellcheck="false">
+    </label>
+    <button>Check</button>
+  </form>
+  <div id="result" aria-live="polite"></div>
+  <div class="tips">
+    <h3>Whatever the result</h3>
+    Get the address from the recipient directly, not from your transaction history. Compare the <b>whole</b> address, not only the start and end. For a large payment, send a small test first.
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// show `a`, marking every character that differs from `ref` at the same position
+function diff(a, ref) {
+  if (!ref) return `<span class="addr">${esc(a)}</span>`;
+  let out = "";
+  for (let i = 0; i < a.length; i++) out += a[i] === ref[i] ? esc(a[i]) : `<span class="diff">${esc(a[i])}</span>`;
+  return `<span class="addr">${out}</span>`;
+}
+function render(r) {
+  const k = r.known_lookalike, p = r.planted_in_your_history, im = r.imitates_your_counterparty;
+  const real = (p && p.mimics) || (im && im.real) || (k && k.mimics[0]);
+  const titles = {
+    danger: "🚨 Do not send: known lookalike",
+    warning: "⚠️ Looks like an address you have paid",
+    known: "✓ You have paid this address before",
+    unknown: "No record of this address",
+  };
+  let body = "";
+  if (real && r.verdict !== "known") {
+    body += `<div class="small">You are about to send to (differences underlined):</div>${diff(r.to, real)}`;
+    body += `<div class="small">The real address it imitates:</div>${diff(real, null)}`;
+  }
+  const facts = [];
+  if (p) facts.push("It was planted in <b>your own</b> transaction history.");
+  if (k) facts.push(`It was used to poison <b>${k.victims.toLocaleString()}</b> wallet(s).`);
+  if (r.losses_to_it) facts.push(`<b>${r.losses_to_it}</b> payment(s) have already been lost to it.`);
+  if (im && !p && !k) facts.push(`It shares the first ${im.prefix} and last ${im.suffix} characters with an address you have transacted with, but you have never paid it. That is how poisoning works, even if no attack has been seen yet.`);
+  if (r.verdict === "known") facts.push("Your wallet has sent or received at least 1 USDC with this exact address. Still compare it with the recipient.");
+  if (r.verdict === "unknown") facts.push(r.from
+    ? "It is not a known lookalike and does not imitate anyone in your history that the detector has seen. That is not proof it is safe."
+    : "It is not a known lookalike. Add your wallet to also check it against your own history. Not proof it is safe.");
+  $("result").innerHTML = `<div class="card ${r.verdict}"><h2>${titles[r.verdict]}</h2>${body}<ul>${facts.map((f) => `<li>${f}</li>`).join("")}</ul></div>`;
+}
+$("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = new URLSearchParams({ to: $("to").value.trim() });
+  if ($("from").value.trim()) q.set("from", $("from").value.trim());
+  $("result").innerHTML = '<div class="card unknown">Checking…</div>';
+  try {
+    const res = await fetch("/api/check?" + q);
+    const r = await res.json();
+    if (!res.ok) throw new Error(r.error);
+    render(r);
+  } catch (err) {
+    $("result").innerHTML = `<div class="card warning"><h2>Can't check</h2>${esc(err.message)}</div>`;
+  }
+});
+</script>
+</body>
+</html>
