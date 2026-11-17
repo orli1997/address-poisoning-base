@@ -166,6 +166,22 @@ Native ETH transfers do not appear in event logs, so this step uses Alchemy's `a
 
 **Why this matters.** In a real case, these withdrawals are the lead to follow. A custodial service knows which customer account made each withdrawal (KYC), and a request from law enforcement could name them. This analysis can point to the transactions, but not to the people.
 
+## Live detector
+
+The research above ran once, on 72 hours of past data. [`live.py`](poison/live.py) applies the same rules **to every new block as it arrives**, one transfer at a time and in chain order, and raises an alert for each new (victim, lookalike) pair and for each payment to a lookalike.
+
+| Check | Result |
+|---|---|
+| **Same answers as the research.** The full 72 h window (11,670,478 transfers) run through the live logic | 327,930 poison events, 241,977 victim–lookalike pairs, 1 loss (298 USDC). **Identical** to the batch detector |
+| **Speed** | about 7,300 transfers per second on a laptop. Base carries about 35 USDC transfers per second |
+| **Time to alert on the live chain** | 4 seconds from block to alert (16 Nov 2026, block 58,607,803) |
+| **Caught live poisoning from a cold start** | yes: one batch transaction poisoned 4 victims about 90 seconds after the detector started |
+
+- **It remembers relationships.** Every transfer of 1 USDC or more is stored as a relationship. A poison alert needs a relationship from an *earlier* block, which is the same rule as the research.
+- **Warm start.** A fresh detector knows no history, so it misses poisoning that imitates older counterparties. `--seed` loads the research window's relationships first. Relationships unused for 30 days are dropped (`--keep-days`).
+- **Reorg safety.** It stays 10 blocks (~2 s) behind the head.
+- **Next step:** a Telegram bot that sends each alert to the victim who subscribed their address.
+
 ## Method
 
 Code is in [poison/](poison/), queries in [sql/analysis.sql](sql/analysis.sql), and tests in [tests/](tests/).
@@ -218,5 +234,8 @@ python -m poison.campaigns
 python -m poison.report
 python -m poison.followup     # payments into lookalikes after the window; rerun to extend
 python -m poison.trace        # ETH funding sources; needs ALCHEMY_KEY=... in .env (git-ignored)
+python -m poison.live --replay  # live logic on the research window; must match detect.py
+python -m poison.live --seed    # optional warm start from the research window
+python -m poison.live           # follow the chain head; Ctrl+C to stop, rerun to resume
 python -m pytest
 ```
