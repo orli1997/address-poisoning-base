@@ -236,6 +236,10 @@ There is no labelled list of poisoners, so [`evaluate.py`](poison/evaluate.py) b
 - **Not measured: recall.** The detector misses poisoning that imitates relationships older than its memory, and near-miss lookalikes (for example 3 matching characters, or matching characters in the middle).
 - **Short behaviour window.** The behaviour test sees only 72 hours of each address.
 
+### Used by AgentGuard: blocking AI-agent payments
+
+The detector's database is also threat intel for [AgentGuard](https://github.com/orli1997/agentguard), my pre-signing risk engine for payments made by AI agents. Before the service signs a payment, it looks the destination up in `live.db` (read-only). A known poisoning address is blocked (`KNOWN_POISONING_ADDRESS`), with the real address it imitates and the number of wallets it poisoned as evidence. This matters most for agents: one that copies an address from the wallet's history is exactly the victim this attack targets, and without the intel AgentGuard could only send that payment to review, because there was no trusted address to compare with. In a run on 2026-11-18, a payment to `0xa742debd…b9c3` went from REVIEW to BLOCK ("used to poison 1074 wallets"); the real address it imitates stayed REVIEW, because the intel can say an address is bad but never that it is good.
+
 ## Method
 
 Code is in [poison/](poison/), queries in [sql/analysis.sql](sql/analysis.sql), and tests in [tests/](tests/).
